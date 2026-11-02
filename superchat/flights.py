@@ -1,3 +1,4 @@
+import logging
 from .common import ok, empty, needs, error, code, as_list, MAX_LIST
 from .text import norm, num, canon_city
 
@@ -12,9 +13,12 @@ class FlightsModule:
     def __init__(self, repo):
         self.repo = repo
         self.cities = {}
-        for f in repo.all():
-            for k in ("origin", "destination"):
-                self.cities[f[k]["code"]] = f[k]["city"]
+        try:  # city names are cosmetic: a data-source outage at startup must not stop the app
+            for f in repo.all():
+                for k in ("origin", "destination"):
+                    self.cities[f[k]["code"]] = f[k]["city"]
+        except Exception:
+            logging.getLogger("superchat.flights").warning("could not preload flights; continuing")
 
     def view(self, f):
         return {"id": f["id"], "airline": f["airline"], "flight_number": f["flight_number"],

@@ -92,4 +92,7 @@ def build_repositories() -> Repositories:
     if source == "json":
         return Repositories(JsonFlightRepository(), JsonProductRepository(), JsonMovieRepository(),
                             JsonCinemaRepository(), JsonShowtimeRepository())
-    raise NotImplementedError(f"DATA_SOURCE={source!r}: implement Api* repositories here in Phase 2")
+    if source == "api":
+        from .api_repositories import build_api_repositories
+        return build_api_repositories(Repositories)
+    raise ValueError(f"Unknown DATA_SOURCE={source!r} (use 'json' or 'api')")

@@ -18,7 +18,7 @@ USE_LLM=0 python tests/run_routing_eval.py  # rules-only baseline
 ```
 
 ## Architecture
-- `repositories.py` – interfaces (`FlightRepository`, `ProductRepository`, `MovieRepository`, `CinemaRepository`, `ShowtimeRepository`) + JSON implementations. Phase 2: add `Api*` classes and handle `DATA_SOURCE` in `build_repositories()`; nothing else changes.
+- `repositories.py` – interfaces (`FlightRepository`, `ProductRepository`, `MovieRepository`, `CinemaRepository`, `ShowtimeRepository`) + JSON implementations. Phase 2: `DATA_SOURCE=api` switches to the `Api*` repositories; nothing else changes.
 - `flights.py / shopping.py / cinema.py` – domain modules (deterministic filtering, sorting, comparison, cart, mock reservations with seat/stock checks).
 - `router.py` – ONE LLM call returns JSON: route (answer / ambiguous / out_of_scope), follow-up flag, and a list of intents with args (mixed = several intents). `rules.py` is the fallback when the LLM fails.
 - `composer.py` – second LLM call writes the reply from tool results only (no invented data); template fallback.
@@ -26,3 +26,6 @@ USE_LLM=0 python tests/run_routing_eval.py  # rules-only baseline
 - Reference date 2026-11-02 (`config.REF_DATE`), data in `data/`.
 
 LLM: NVIDIA NIM free tier (OpenAI-compatible API, ~40 requests/min). At most 2 LLM calls per message, retries with backoff on 429/5xx.
+
+## Phase 2 – real APIs
+`DATA_SOURCE=api` + base URLs/keys in `.env` (see `.env.example`). `api_client.py` provides auth, timeouts, retry with backoff, 429/`Retry-After`, optional client-side rate limit, pagination, TTL cache (serves stale data if the API is down) and logging (keys are never logged). `api_repositories.py` holds the endpoint paths and the `_map()` hook for field mapping. The endpoint contract there is an **assumption** until the official API docs are available. `tests/test_api.py` runs everything against an in-process mock API: `pytest -q`.
