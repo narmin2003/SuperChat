@@ -15,6 +15,7 @@ Rules:
 - Present lists numbered 1., 2., 3. in the SAME order as given so the user can say "the second one". Do not show internal ids (F001, P002, S003, M001) - reservation codes ARE shown.
 - Prices in AZN, times 24h and local, durations like 3h 35m. State seats left / stock when relevant; flag sold-out or out-of-stock items.
 - If "assumption" is present, mention it in one short clause. If results cover several domains, give one coherent reply with a short line per domain.
+- A field that is missing from a result (baggage, seats left, arrival time...) is not provided by the data source: say it is not available, never guess it.
 - After a successful reservation say it is a mock reservation (no payment). After listing options you may end with ONE short next-step suggestion."""
 
 
@@ -41,14 +42,19 @@ def _dur(m):
 
 
 def _flight(i, f):
-    stops = "direct" if f["stops"] == 0 else f"{f['stops']} stop via {f['via']}"
-    return (f"{i}. {f['airline']} {f['flight_number']} {f['from']}→{f['to']} {f['departure'][:10]} {f['departure'][11:]}–{f['arrival'][11:]}, "
-            f"{_dur(f['duration_min'])}, {stops}, {f['baggage_kg']} kg, {f['seats_left']} seats left, {f['price_azn']:.0f} AZN")
+    n = f["stops"]
+    stops = "direct" if n == 0 else f"{n} stop{'s' if n > 1 else ''}" + (f" via {f['via']}" if f.get("via") else "")
+    times = f["departure"][11:] + (f"–{f['arrival'][11:]}" if f.get("arrival") else "")
+    extra = [x for x in (f"{f['baggage_kg']} kg" if f.get("baggage_kg") is not None else None,
+                         f"{f['seats_left']} seats left" if f.get("seats_left") is not None else None) if x]
+    return (f"{i}. {f['airline']} {f['flight_number']} {f['from']}→{f['to']} {f['departure'][:10]} {times}, "
+            + ", ".join([_dur(f["duration_min"]), stops, *extra, f"{f['price_azn']:.0f} AZN"]))
 
 
 def _product(i, p):
     st = f"{p['stock']} in stock" if p["in_stock"] else "OUT OF STOCK"
-    return f"{i}. {p['name']} ({p['brand']}, {p['color']}) {p['price_azn']:.2f} AZN, rating {p['rating']}, {st}"
+    tags = ", ".join(x for x in (p["brand"], p["color"]) if x)
+    return f"{i}. {p['name']}" + (f" ({tags})" if tags else "") + f" {p['price_azn']:.2f} AZN, rating {p['rating']}, {st}"
 
 
 def _show(i, t):

@@ -7,7 +7,7 @@ import httpx
 
 log = logging.getLogger("superchat.api")
 RETRY_STATUS = {429, 500, 502, 503, 504}
-ITEM_KEYS = ("items", "results", "data")
+ITEM_KEYS = ("items", "results", "data", "products")
 
 
 class ApiError(Exception):
@@ -16,10 +16,10 @@ class ApiError(Exception):
 
 class ApiClient:
     def __init__(self, name, base_url, api_key="", auth_header="Authorization", timeout=5.0, retries=3,
-                 cache_ttl=60.0, max_rps=0.0, page_size=100, transport=None, sleep=time.sleep):
+                 cache_ttl=60.0, max_rps=0.0, transport=None, sleep=time.sleep):
         if not base_url:
             raise ApiError(f"{name}: base URL is not configured")
-        self.name, self.page_size, self.retries, self.cache_ttl = name, page_size, retries, cache_ttl
+        self.name, self.retries, self.cache_ttl = name, retries, cache_ttl
         self._sleep, self._min_gap, self._last_call = sleep, (1.0 / max_rps if max_rps > 0 else 0.0), 0.0
         headers = {"Accept": "application/json"}
         if api_key:
@@ -77,19 +77,24 @@ class ApiClient:
                     return body[k]
         raise ApiError("unexpected list response shape")
 
-    def get_all(self, path, max_pages=50):
-        """Follows ?page=N&page_size=M until a short/empty page."""
-        out = []
-        for page in range(1, max_pages + 1):
-            items = self._items(self._json(self.request("GET", path, params={"page": page, "page_size": self.page_size})))
+    def get_json(self, path, params=None):
+        body = self._json(self.request("GET", path, params=params))
+        if isinstance(body, dict) and body.get("success") is False:
+            raise ApiError(f"{self.name}: {str(body.get('error') or 'request failed')[:100]}")
+        return body
+
+    def paged(self, path, page_size=100, max_pages=50):
+        """limit/skip pagination: keeps requesting until `total` is reached or a page comes back empty."""
+        out, skip = [], 0
+        for _ in range(max_pages):
+            body = self.get_json(path, {"limit": page_size, "skip": skip})
+            items = self._items(body)
             out += items
-            if len(items) < self.page_size:
+            skip += len(items)
+            total = body.get("total") if isinstance(body, dict) else None
+            if not items or (total is not None and skip >= total) or (total is None and len(items) < page_size):
                 break
         return out
-
-    def get_one(self, path):
-        r = self.request("GET", path)
-        return None if r.status_code == 404 else self._json(r)
 
     def cached(self, key, loader):
         """TTL cache; on loader failure serve stale data if we have any (latency/outage resilience)."""

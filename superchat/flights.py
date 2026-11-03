@@ -85,6 +85,11 @@ class FlightsModule:
         assumed = None
         if d and not o and d != "Baku":
             o, assumed = "Baku", "origin assumed to be Baku"
+        try:
+            self.repo.prepare(o, d, str(a["date"])[:10] if a.get("date") else None)
+        except Exception as e:  # noqa: BLE001 - data source down: say so, keep the chat alive
+            logging.getLogger("superchat.flights").warning("flight source failed: %s", e)
+            return error(D, "search", "The flight data source is temporarily unavailable. Please try again in a moment.")
         route = [f for f in self.repo.all()
                  if (not o or f["origin"]["city"] == o) and (not d or f["destination"]["city"] == d)]
         res = list(route)
@@ -114,7 +119,7 @@ class FlightsModule:
         f = self.repo.get(fid)
         if n < 1:
             return error(D, "reserve", "Number of passengers must be at least 1.")
-        if f["seats_available"] < n:
+        if f["seats_available"] is not None and f["seats_available"] < n:
             return error(D, "reserve", f"Only {f['seats_available']} seat(s) left on this flight.", seats_left=f["seats_available"])
         if not self.repo.reserve_seats(fid, n):
             return error(D, "reserve", "Could not reserve seats, please try again.")

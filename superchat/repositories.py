@@ -8,6 +8,9 @@ from . import config
 
 
 class FlightRepository(ABC):
+    def prepare(self, origin, destination, date) -> None:
+        """Hook for sources that must be queried per route (real flight APIs). No-op for the mock data."""
+
     @abstractmethod
     def all(self) -> list: ...
     @abstractmethod
@@ -86,13 +89,29 @@ class Repositories:
     showtimes: ShowtimeRepository
 
 
-def build_repositories() -> Repositories:
+def _source(domain):
     import os
-    source = os.getenv("DATA_SOURCE", "json")
-    if source == "json":
-        return Repositories(JsonFlightRepository(), JsonProductRepository(), JsonMovieRepository(),
-                            JsonCinemaRepository(), JsonShowtimeRepository())
-    if source == "api":
-        from .api_repositories import build_api_repositories
-        return build_api_repositories(Repositories)
-    raise ValueError(f"Unknown DATA_SOURCE={source!r} (use 'json' or 'api')")
+    src = os.getenv(f"{domain}_SOURCE", os.getenv("DATA_SOURCE", "json"))
+    if src not in ("json", "api"):
+        raise ValueError(f"Unknown {domain}_SOURCE/DATA_SOURCE={src!r} (use 'json' or 'api')")
+    return src
+
+
+def build_repositories(transports=None) -> Repositories:
+    """Per-domain source: FLIGHTS_SOURCE / SHOPPING_SOURCE (default DATA_SOURCE). Cinema is always the mock data:
+    no public showtimes API exists. A misconfigured real source falls back to the mock data with a loud warning."""
+    import logging
+    transports = transports or {}
+    flights, products = JsonFlightRepository(), JsonProductRepository()
+    from .api_client import ApiError
+    for domain, name in (("FLIGHTS", "flights"), ("SHOPPING", "products")):
+        if _source(domain) == "api":
+            from . import api_repositories as api
+            try:
+                repo = api.make_flight_repository(transports.get("flights")) if name == "flights" \
+                    else api.make_product_repository(transports.get("products"))
+            except ApiError as e:
+                logging.getLogger("superchat").error("%s: %s - falling back to mock data", domain, e)
+            else:
+                flights, products = (repo, products) if name == "flights" else (flights, repo)
+    return Repositories(flights, products, JsonMovieRepository(), JsonCinemaRepository(), JsonShowtimeRepository())

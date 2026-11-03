@@ -3,7 +3,7 @@
 **One chat window for flights, shopping and cinema.** SuperChat combines three assistants (Aviasales-style flight search, an e-commerce Shopping Assistant and CinemaPlus-style cinema booking) behind a single conversational interface. The user never picks a mode: every message is routed automatically, and the conversation stays coherent when the topic changes.
 
 - Live demo: https://superchat-csfk.onrender.com/ (free hosting, the first load can take about a minute)
-- Phase 1 (mock data) is tagged `phase1`; Phase 2 (real-API layer) is on `main`.
+- Phase 1 (mock data) is tagged `phase1`; Phase 2 (real flight and shopping APIs) is on `main`.
 
 ---
 
@@ -78,19 +78,14 @@ All settings are environment variables, read from `.env` (never committed; use `
 | `SUPERCHAT_MODEL` | `meta/llama-3.3-70b-instruct` | LLM model name. `python tools/find_model.py` finds one that works with your key. |
 | `USE_LLM` | `1` | `0` forces the rule-based router (used for the baseline test run). |
 | `PORT` | `8000` | Server port. |
-| `DATA_SOURCE` | `json` | `json` = mock dataset in `data/`; `api` = real APIs (Phase 2). |
-| `REF_DATE` | `2026-11-02` | Reference date of the mock dataset ("tonight", "Friday"). |
-| `AVIASALES_BASE_URL`, `AVIASALES_API_KEY` | – | Flights API (only with `DATA_SOURCE=api`). |
-| `SHOPPING_BASE_URL`, `SHOPPING_API_KEY` | – | Shopping Assistant API. |
-| `CINEMAPLUS_BASE_URL`, `CINEMAPLUS_API_KEY` | – | CinemaPlus API (movies, cinemas, showtimes). |
-| `API_AUTH_HEADER` | `Authorization` | `Authorization` sends `Bearer <key>`; any other name sends the raw key in that header. |
-| `API_TIMEOUT` | `5` | Request timeout in seconds. |
-| `API_RETRIES` | `3` | Attempts per request (429, 5xx, network errors). |
-| `API_CACHE_TTL` | `60` | Cache lifetime in seconds. |
-| `API_PAGE_SIZE` | `100` | Page size for paginated lists. |
-| `API_MAX_RPS` | `0` | Client-side requests per second limit (`0` = off). |
+| `DATA_SOURCE` | `json` | `json` = mock dataset in `data/`; `api` = real APIs for flights and shopping (Phase 2). |
+| `FLIGHTS_SOURCE`, `SHOPPING_SOURCE` | `DATA_SOURCE` | Choose `json` or `api` per domain. |
+| `TRAVELPAYOUTS_TOKEN` | – | Free Aviasales Data API token (needed for real flights). Without it flights fall back to the mock data with a warning. |
+| `FLIGHTS_BASE_URL`, `SHOPPING_BASE_URL` | Travelpayouts, DummyJSON | API base URLs. |
+| `USD_AZN_RATE` | `1.70` | Both APIs return USD; prices are shown in AZN. |
+| `REF_DATE` | `2026-11-02` | Reference date ("tonight", "Friday"); also the default month for flight searches without a date. |
+| `API_TIMEOUT` / `API_RETRIES` / `API_CACHE_TTL` / `API_MAX_RPS` | `5` / `3` / `300` / `0` | Timeout (s), attempts, cache lifetime (s), client-side requests per second (`0` = off). |
 
-Each `API_*` setting can also be set per service, e.g. `AVIASALES_TIMEOUT=10`.
 
 ---
 
@@ -148,19 +143,15 @@ All data access goes through repository interfaces in `superchat/repositories.py
 
 **Phase 1 (default, `DATA_SOURCE=json`).** `Json*` repositories read the official mock dataset in `data/` (17 flights, 12 products, 8 movies, 3 cinemas, 16 showtimes). Reservations change in-memory seat counts under a lock.
 
-**Phase 2 (`DATA_SOURCE=api`).** `Api*` repositories in `superchat/api_repositories.py` implement the same interfaces on top of `superchat/api_client.py`:
+**Phase 2 (`DATA_SOURCE=api`).** Real public APIs behind the same interfaces (`superchat/api_repositories.py`, on top of `superchat/api_client.py`):
 
-| Requirement | Implementation |
-|---|---|
-| Authentication | API key from `.env`, sent as Bearer or custom header; never logged |
-| Rate limits | Retry on 429/5xx with exponential backoff, honours `Retry-After`; optional client-side `API_MAX_RPS` |
-| Pagination | `page` / `page_size` loop until a short page |
-| Latency | Per-request timeout, limited retries |
-| Caching | TTL cache; stale data is served if the API goes down; cache cleared after a reservation |
-| Logging | Method, path, status and duration for every call |
-| Error handling | `ApiError` is caught per module; the user gets a friendly message |
+| Domain | Real API | Notes |
+|---|---|---|
+| Flights | **Aviasales Data API** (Travelpayouts) `GET /aviasales/v3/prices_for_dates`, token in `X-Access-Token` | Free token. Returns cached prices found by Aviasales users: **no baggage, seats left or arrival time**, so these are shown as "not available" (never invented). The API has no booking endpoint, so a reservation stays a local mock. A route/date with no cached fare returns "nothing found". City names are mapped to IATA codes by a built-in directory (`CITY_CODES`, extend as needed). |
+| Shopping | **DummyJSON** `GET /products` (limit/skip pagination) | Public demo e-commerce catalogue, no key. Birmarket has no public API, so this is the stand-in. Names are English only (AZ/RU names equal the English title); no colour data; prices USD → AZN. The cart is local. |
+| Cinema | – | No public cinema/showtimes API exists for Azerbaijan, so films, cinemas and showtimes stay on the mock dataset in every mode. |
 
-> **Note:** the exact endpoint paths and response shapes of the real Aviasales / Shopping Assistant / CinemaPlus APIs depend on their documentation. The current paths (`/flights`, `/products`, `/movies`, `/cinemas`, `/showtimes`, `POST /{id}/reserve`) are an assumption documented at the top of `api_repositories.py`; when the official docs arrive, only that file (paths and the `_map()` hook) needs to change. The Phase 2 code is verified against an in-process mock API, not against the real services.
+`api_client.py` adds: authentication headers, per-request timeout, retry with backoff on 429/5xx/network errors (honours `Retry-After`), optional client-side rate limit, limit/skip pagination, TTL cache that serves stale data if the API is down, and logging of every call (secrets are never logged). If the API fails, the user sees a friendly message, not a stack trace; a missing `TRAVELPAYOUTS_TOKEN` falls back to the mock flights.
 
 See `PHASE2_REPORT.md` for the report section.
 
@@ -181,13 +172,13 @@ See `PHASE2_REPORT.md` for the report section.
 ## Tests
 
 ```bash
-pytest -q                                   # 21 tests, no internet or LLM needed
+pytest -q                                   # 25 tests, no internet or LLM needed
 python tests/run_routing_eval.py            # routing accuracy -> writes TEST_LOG.md (uses the LLM if a key is set)
 USE_LLM=0 python tests/run_routing_eval.py  # rules-only baseline
 ```
 
 - `tests/test_modules.py` (11 tests): flights, shopping and cinema logic on the official dataset: filters, "no invented results", reservations and seat limits, cart, state restore.
-- `tests/test_api.py` (10 tests): the Phase 2 layer against an in-process mock API: pagination, caching, retry on 429, giving up after retries without leaking the key, stale cache during an outage, reservations through the API, a chat that survives a full API outage, a three-domain conversation.
+- `tests/test_api.py` (14 tests): the Phase 2 adapters against in-process mocks that copy the documented Travelpayouts and DummyJSON responses: field mapping and USD→AZN, pagination, caching, retry on 429, token never leaked, stale cache during an outage, a chat that survives a full outage, shopping/cart on API products, cinema staying on mock data, fallbacks and per-domain sources. Live calls were not run in CI.
 - `tests/run_routing_eval.py` runs 40 conversations from `tests/cases.py` (all categories). Results with the LLM: **40/40 (100%)**, see `TEST_LOG.md`; rules-only baseline: 38/40 (95%). The two baseline misses (a "this week" phrasing and a Russian mixed request) are exactly the cases the LLM router handles.
 
 ---
@@ -206,7 +197,7 @@ superchat/
   state.py              Per-domain and shared session state
   flights.py shopping.py cinema.py   Domain modules
   repositories.py       Repository interfaces + Json* implementations + build_repositories()
-  api_repositories.py   Api* implementations (Phase 2)
+  api_repositories.py   Travelpayouts (flights) and DummyJSON (shopping) adapters (Phase 2)
   api_client.py         HTTP client: auth, retry, rate limit, pagination, cache, logging
   text.py common.py config.py        Text normalisation, result helpers, settings
 data/                   Official mock dataset (JSON)
@@ -224,7 +215,7 @@ SuperChat_Technical_Report.pdf   Phase 1 technical report
 - Sessions and mock reservations live in memory: they reset when the server restarts and are not shared between server instances.
 - Without an LLM key, routing is rule-based and replies are in English.
 - Filtering happens inside the modules, so with real APIs the full list is fetched (and cached) per source; a very large catalogue would need server-side search in the repositories.
-- Phase 2 has not been verified against the real Aviasales, Shopping Assistant and CinemaPlus services (see the note above).
+- Real flight data is cached price data without seats/baggage/arrival; DummyJSON is a demo catalogue (not Birmarket); cinema has no public API and stays mock (see the Phase 2 table).
 - The optional bonus tasks (voice input, visual search, full multilingual evaluation) are not implemented; the LLM mode does understand and answer in English, Azerbaijani and Russian.
 
 ## Security
