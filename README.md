@@ -207,6 +207,7 @@ tools/                  find_model.py, bench.py (LLM model helpers)
 TEST_LOG.md             Routing test results and error analysis
 PHASE2_REPORT.md        Phase 2 report section
 SuperChat_Technical_Report.pdf   Phase 1 technical report
+SuperChat_Phase2_Report.pdf      Phase 2 technical report (2 pages)
 ```
 
 ---
